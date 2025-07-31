@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.api.dao.IFhirResourceDao;
 import ca.uhn.fhir.jpa.api.model.DaoMethodOutcome;
+import ca.uhn.fhir.jpa.provider.JpaSystemProvider;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.api.MethodOutcome;
@@ -31,18 +32,20 @@ public class ReceiveBundleProvider {
 	private final DaoRegistry daoRegistry;
 	private final FhirContext ctx;
 	private final TestValidator testValidator;
+	private final JpaSystemProvider jpaSystemProvider;
 
-	public ReceiveBundleProvider(DaoRegistry daoRegistry, FhirContext ctx, TestValidator testValidator) {
+	public ReceiveBundleProvider(DaoRegistry daoRegistry, FhirContext ctx, TestValidator testValidator, JpaSystemProvider jpaSystemProvider) {
 		this.daoRegistry = daoRegistry;
 		this.ctx = ctx;
-		this.testValidator = testvalidator;
+		this.testValidator = testValidator;
+		this.jpaSystemProvider = jpaSystemProvider;
 	}
 
 	@Operation(name = "$receiveBundle", idempotent = false)
 	public MethodOutcome receiveBundle(@OperationParam(name = "resource") Bundle bundle) {
 		//TODO Validate the bundle
 
-		//createTransactionBundle(bundle);
+		createTransactionBundle(bundle);
 		// TODO: get Transaction Provider and process the transaction bundle
 
 		testValidator.validateWithResult(bundle);
@@ -151,6 +154,7 @@ public class ReceiveBundleProvider {
 				}
 			}
 		}
+		System.out.println(ctx.newJsonParser().encodeResourceToString(txBundle));
 		return txBundle;
 	}
 }
