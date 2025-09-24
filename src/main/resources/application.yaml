@@ -158,7 +158,20 @@ hapi:
     ### Flag is true by default. This flag filters resources during package installation, allowing only those resources with a valid status (e.g. active) to be installed.
     #    validate_resource_status_for_package_upload: false 
     #    install_transitive_ig_dependencies: true
-    #implementationguides:
+#    implementationguides:
+#      de-basisprofil-r4:
+#        packageUrl: classpath://packages/de.basisprofil.r4-1.5.0-snapshots.tgz
+#        name: de.basisprofil.r4
+#        version: 1.5.0
+#        reloadExisting: true
+#        installMode: STORE_AND_INSTALL
+#      de-gematik-sterbefall:
+#        packageUrl: classpath://packages/de.gematik.sterbefall-1.0.0-beta.1-snapshots.tgz
+#        name: de.gematik.sterbefall
+#        version: 1.0.0-beta.1
+#        reloadExisting: true
+#        installMode: STORE_AND_INSTALL
+
     ###    example from registry (packages.fhir.org)
     #  swiss:
     #    name: swiss.mednet.fhir
