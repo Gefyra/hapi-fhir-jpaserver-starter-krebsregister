@@ -5,6 +5,7 @@ import ca.uhn.fhir.jpa.provider.JpaSystemProvider;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.util.FhirTerser;
 import ca.uhn.fhir.validation.ResultSeverityEnum;
 import ca.uhn.fhir.validation.ValidationResult;
@@ -14,12 +15,17 @@ import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hl7.fhir.instance.model.api.IBaseBundle;
+import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryRequestComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleType;
 import org.hl7.fhir.r4.model.Bundle.HTTPVerb;
 import org.hl7.fhir.r4.model.IdType;
+import org.hl7.fhir.r4.model.OperationOutcome;
+import org.hl7.fhir.r4.model.OperationOutcome.IssueSeverity;
+import org.hl7.fhir.r4.model.OperationOutcome.IssueType;
 import org.hl7.fhir.r4.model.Parameters;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
@@ -50,22 +56,24 @@ public class ReceiveBundleProvider {
 	 * JPA system provider for transaction processing.
 	 */
 	private final JpaSystemProvider jpaSystemProvider;
+	private final static String VALIDATION_PARAM_NAME = "validationResult";
 
 	/**
 	 * Custom FHIR operation that validates and optionally persists an incoming bundle.
 	 * <p>
-	 * The bundle is validated and the resulting {@link org.hl7.fhir.r4.model.OperationOutcome} is
+	 * The bundle is validated and the resulting {@link OperationOutcome} is
 	 * added to the response {@link Parameters}. If the validation contains no {@code ERROR} or
 	 * {@code FATAL} messages, the bundle is transformed into a transaction bundle and submitted via
-	 * {@link JpaSystemProvider#transaction(RequestDetails, org.hl7.fhir.instance.model.api.IBaseBundle)}.
-	 * The resulting transaction response is then appended to the returned parameters resource.
+	 * {@link JpaSystemProvider#transaction(RequestDetails,
+	 * IBaseBundle)}. The resulting transaction response is then
+	 * appended to the returned parameters resource.
 	 *
 	 * @param requestDetails request context provided by HAPI FHIR
 	 * @param bundle         incoming bundle to validate (and potentially persist)
-	 * @return parameters with the validation outcome and, on success, the transaction response
+	 * @return parameters with the transaction response
 	 */
 	@Operation(name = "$receiveBundle", idempotent = false)
-	public Parameters receiveBundle(RequestDetails requestDetails,
+	public Bundle receiveBundle(RequestDetails requestDetails,
 		@OperationParam(name = "resource") Bundle bundle) {
 
 		// Validate the bundle and print the result
@@ -74,23 +82,26 @@ public class ReceiveBundleProvider {
 		log.debug("Operation outcome: " + ctx.newJsonParser().setPrettyPrint(true)
 			.encodeResourceToString(validationResult.toOperationOutcome()));
 
-		Parameters response = new Parameters();
-		
-		// Add validation result
-		response.addParameter()
-			.setName("validationResult")
-			.setResource((Resource) validationResult.toOperationOutcome());
+		Parameters response
+			= new Parameters();
+
+		// if validation failed set status code and return OperationOutcome
+		if (!validationResult.isSuccessful()) {
+			throw new InvalidRequestException("Bundle validation failed",
+				validationResult.toOperationOutcome());
+		}
 
 		// Only create and execute transaction if no errors
-		if (validationResult.isSuccessful()) {
-			Bundle tx = createTransactionBundle(bundle);
-			Bundle transactionResponse = (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
-			
-			response.addParameter()
-				.setName("transactionResponse")
-				.setResource(transactionResponse);
+		Bundle transactionResponse = new Bundle();
+		try {
+			if (validationResult.isSuccessful()) {
+				Bundle tx = createTransactionBundle(bundle);
+				transactionResponse = (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
+			}
+		} catch (Exception e) {
+			throw new InvalidRequestException(e);
 		}
-		return response;
+		return transactionResponse;
 	}
 
 	/**
