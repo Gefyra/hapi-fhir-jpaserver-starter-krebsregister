@@ -6,6 +6,7 @@ import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.FhirTerser;
 import ca.uhn.fhir.validation.ResultSeverityEnum;
 import ca.uhn.fhir.validation.ValidationResult;
@@ -80,7 +81,7 @@ public class ReceiveBundleProvider {
 
 		// if validation failed set status code and return OperationOutcome
 		if (!validationResult.isSuccessful()) {
-			throw new InvalidRequestException("Bundle validation failed",
+			throw new UnprocessableEntityException("Bundle validation failed",
 				validationResult.toOperationOutcome());
 		}
 
@@ -92,7 +93,7 @@ public class ReceiveBundleProvider {
 				transactionResponse = (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
 			}
 		} catch (Exception e) {
-			throw new InvalidRequestException(e);
+			throw new UnprocessableEntityException("Error during transaction processing: " + e.getMessage());
 		}
 		return transactionResponse;
 	}
