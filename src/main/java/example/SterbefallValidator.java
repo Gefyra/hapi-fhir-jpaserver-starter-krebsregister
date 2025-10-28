@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
  * The validator is set to allow any extensions, suppress extensible warnings, and not error on unknown profiles.
  */
 @Service
-public class TestValidator extends FhirValidator {
+public class SterbefallValidator extends FhirValidator {
 
 	/**
 	 * Constructs a TestValidator with a custom validation support chain and configuration.
@@ -31,7 +31,7 @@ public class TestValidator extends FhirValidator {
 	 * @param ctx The FHIR context to use for validation.
 	 * @throws IOException If loading the NPM package from the classpath fails.
 	 */
-	public TestValidator(FhirContext ctx) throws IOException {
+	public SterbefallValidator(FhirContext ctx) throws IOException {
 		super(ctx);
 
 		// Load custom NPM package for validation support

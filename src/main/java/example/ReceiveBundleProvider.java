@@ -1,7 +1,6 @@
 package example;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.provider.JpaSystemProvider;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
@@ -13,6 +12,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryRequestComponent;
@@ -22,7 +23,6 @@ import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Parameters;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 /**
@@ -34,12 +34,10 @@ import org.springframework.stereotype.Component;
  * executed via the injected {@link JpaSystemProvider}.
  */
 @Component
+@Slf4j
+@RequiredArgsConstructor
 public class ReceiveBundleProvider {
 
-	/**
-	 * Registry for accessing resource DAOs.
-	 */
-	private final DaoRegistry daoRegistry;
 	/**
 	 * FHIR context for parsing and resource utilities.
 	 */
@@ -47,27 +45,11 @@ public class ReceiveBundleProvider {
 	/**
 	 * Custom validator for FHIR resources.
 	 */
-	private final TestValidator testValidator;
+	private final SterbefallValidator sterbefallValidator;
 	/**
 	 * JPA system provider for transaction processing.
 	 */
 	private final JpaSystemProvider jpaSystemProvider;
-
-	/**
-	 * Constructs the provider with required dependencies.
-	 *
-	 * @param daoRegistry       DAO registry for resource access
-	 * @param ctx               FHIR context
-	 * @param testValidator     Validator for FHIR resources
-	 * @param jpaSystemProvider JPA system provider for transactions
-	 */
-	public ReceiveBundleProvider(DaoRegistry daoRegistry, FhirContext ctx,
-		TestValidator testValidator, JpaSystemProvider jpaSystemProvider) {
-		this.daoRegistry = daoRegistry;
-		this.ctx = ctx;
-		this.testValidator = testValidator;
-		this.jpaSystemProvider = jpaSystemProvider;
-	}
 
 	/**
 	 * Custom FHIR operation that validates and optionally persists an incoming bundle.
@@ -87,12 +69,11 @@ public class ReceiveBundleProvider {
 		@OperationParam(name = "resource") Bundle bundle) {
 
 		// Validate the bundle and print the result
-		ValidationResult validationResult = testValidator.validateWithResult(bundle);
-		System.out.println("Validation result: " + validationResult.isSuccessful());
-		System.out.println("Operation outcome: " + ctx.newJsonParser().setPrettyPrint(true)
+		ValidationResult validationResult = sterbefallValidator.validateWithResult(bundle);
+		log.info("Validation successful?: " + validationResult.isSuccessful());
+		log.debug("Operation outcome: " + ctx.newJsonParser().setPrettyPrint(true)
 			.encodeResourceToString(validationResult.toOperationOutcome()));
 
-		// Create response Parameters
 		Parameters response = new Parameters();
 		
 		// Add validation result
@@ -100,13 +81,8 @@ public class ReceiveBundleProvider {
 			.setName("validationResult")
 			.setResource((Resource) validationResult.toOperationOutcome());
 
-		// Check if validation has errors
-		boolean hasErrors = validationResult.getMessages().stream()
-			.anyMatch(msg -> msg.getSeverity() == ResultSeverityEnum.ERROR 
-				|| msg.getSeverity() == ResultSeverityEnum.FATAL);
-
 		// Only create and execute transaction if no errors
-		if (!hasErrors) {
+		if (validationResult.isSuccessful()) {
 			Bundle tx = createTransactionBundle(bundle);
 			Bundle transactionResponse = (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
 			
@@ -114,7 +90,6 @@ public class ReceiveBundleProvider {
 				.setName("transactionResponse")
 				.setResource(transactionResponse);
 		}
-
 		return response;
 	}
 
