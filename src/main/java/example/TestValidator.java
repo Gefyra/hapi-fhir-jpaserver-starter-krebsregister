@@ -39,7 +39,7 @@ public class TestValidator extends FhirValidator {
 		npmPackageValidationSupport.loadPackageFromClasspath(
 			"classpath:/packages/de.basisprofil.r4-1.5.0-snapshots.tgz");
 		npmPackageValidationSupport.loadPackageFromClasspath(
-			"classpath:/packages/de.gematik.sterbefall-1.0.0-beta.1-snapshots.tgz");
+			"classpath:/packages/de.gematik.sterbefall-1.0.0-beta.2-snapshots.tgz");
 
 		// Build the validation support chain
 		ValidationSupportChain validationSupportChain = new ValidationSupportChain(

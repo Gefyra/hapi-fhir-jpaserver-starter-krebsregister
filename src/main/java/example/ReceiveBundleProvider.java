@@ -7,6 +7,7 @@ import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.util.FhirTerser;
+import ca.uhn.fhir.validation.ResultSeverityEnum;
 import ca.uhn.fhir.validation.ValidationResult;
 import java.util.HashMap;
 import java.util.List;
@@ -15,17 +16,22 @@ import java.util.UUID;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryRequestComponent;
+import org.hl7.fhir.r4.model.Bundle.BundleType;
+import org.hl7.fhir.r4.model.Bundle.HTTPVerb;
 import org.hl7.fhir.r4.model.IdType;
+import org.hl7.fhir.r4.model.Parameters;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 /**
- * Provider for handling the custom $receiveBundle operation.
+ * Provider that implements the custom {@code $receiveBundle} operation.
  * <p>
- * This class validates an incoming FHIR Bundle, prints the validation result, and transforms the
- * bundle into a transaction bundle with new UUID-based URNs for all resources and their references.
- * The transaction bundle is then processed using the JPA system provider.
+ * An incoming bundle is validated, the validation outcome is always returned, and—only when the
+ * validation does not contain {@link ResultSeverityEnum#ERROR} or {@link ResultSeverityEnum#FATAL}
+ * messages—the bundle is converted into a transaction bundle with freshly generated UUID URNs and
+ * executed via the injected {@link JpaSystemProvider}.
  */
 @Component
 public class ReceiveBundleProvider {
@@ -64,17 +70,20 @@ public class ReceiveBundleProvider {
 	}
 
 	/**
-	 * Custom FHIR operation to receive and process a bundle.
+	 * Custom FHIR operation that validates and optionally persists an incoming bundle.
 	 * <p>
-	 * Validates the bundle, prints the result, transforms it into a transaction bundle, and executes
-	 * the transaction.
+	 * The bundle is validated and the resulting {@link org.hl7.fhir.r4.model.OperationOutcome} is
+	 * added to the response {@link Parameters}. If the validation contains no {@code ERROR} or
+	 * {@code FATAL} messages, the bundle is transformed into a transaction bundle and submitted via
+	 * {@link JpaSystemProvider#transaction(RequestDetails, org.hl7.fhir.instance.model.api.IBaseBundle)}.
+	 * The resulting transaction response is then appended to the returned parameters resource.
 	 *
-	 * @param requestDetails Request context
-	 * @param bundle         The input FHIR Bundle resource
-	 * @return The result Bundle from the transaction
+	 * @param requestDetails request context provided by HAPI FHIR
+	 * @param bundle         incoming bundle to validate (and potentially persist)
+	 * @return parameters with the validation outcome and, on success, the transaction response
 	 */
 	@Operation(name = "$receiveBundle", idempotent = false)
-	public Bundle receiveBundle(RequestDetails requestDetails,
+	public Parameters receiveBundle(RequestDetails requestDetails,
 		@OperationParam(name = "resource") Bundle bundle) {
 
 		// Validate the bundle and print the result
@@ -83,22 +92,43 @@ public class ReceiveBundleProvider {
 		System.out.println("Operation outcome: " + ctx.newJsonParser().setPrettyPrint(true)
 			.encodeResourceToString(validationResult.toOperationOutcome()));
 
-		// Transform the bundle and execute as a transaction
-		Bundle tx = createTransactionBundle(bundle);
-		return (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
+		// Create response Parameters
+		Parameters response = new Parameters();
+		
+		// Add validation result
+		response.addParameter()
+			.setName("validationResult")
+			.setResource((Resource) validationResult.toOperationOutcome());
+
+		// Check if validation has errors
+		boolean hasErrors = validationResult.getMessages().stream()
+			.anyMatch(msg -> msg.getSeverity() == ResultSeverityEnum.ERROR 
+				|| msg.getSeverity() == ResultSeverityEnum.FATAL);
+
+		// Only create and execute transaction if no errors
+		if (!hasErrors) {
+			Bundle tx = createTransactionBundle(bundle);
+			Bundle transactionResponse = (Bundle) jpaSystemProvider.transaction(requestDetails, tx);
+			
+			response.addParameter()
+				.setName("transactionResponse")
+				.setResource(transactionResponse);
+		}
+
+		return response;
 	}
 
 	/**
-	 * Transforms a collection bundle into a transaction bundle with new UUID URNs for all resources
-	 * and references.
+	 * Transforms the supplied bundle into a transaction bundle using freshly generated UUID URNs.
 	 * <p>
-	 * Steps: 1. Map all original fullUrls and resource type/IDs to new URNs. 2. Map all reference
-	 * strings in the original resources to new URNs. 3. Build a new transaction bundle with updated
-	 * fullUrls and resource IDs. 4. Replace all references in the transaction bundle with the new
-	 * URNs.
+	 * The method first records mappings for every entry's {@code fullUrl} and type/id pair, then
+	 * augments the mapping with references found inside the original resources. Afterwards it
+	 * constructs a transaction bundle that reuses the existing resource instances while updating
+	 * their internal IDs and fullUrls. Finally, all references inside the transaction bundle are
+	 * rewritten so that they point to the newly generated URNs.
 	 *
-	 * @param collectionBundle The input collection bundle
-	 * @return A transaction bundle with updated references and IDs
+	 * @param collectionBundle bundle whose entries should be rewritten for transaction submission
+	 * @return transaction bundle with aligned fullUrls, IDs, and references
 	 */
 	private Bundle createTransactionBundle(Bundle collectionBundle) {
 		// --- 1. Pass: fullUrl + ResourceType/Id mapping ---
@@ -158,7 +188,7 @@ public class ReceiveBundleProvider {
 
 		// --- 3. Pass: build the transaction bundle ---
 		Bundle txBundle = new Bundle();
-		txBundle.setType(Bundle.BundleType.TRANSACTION);
+		txBundle.setType(BundleType.TRANSACTION);
 
 		for (BundleEntryComponent oldEntry : collectionBundle.getEntry()) {
 			Resource res = (Resource) oldEntry.getResource();
@@ -181,7 +211,7 @@ public class ReceiveBundleProvider {
 				.setFullUrl(newUrn)
 				.setResource(res)
 				.setRequest(new BundleEntryRequestComponent()
-					.setMethod(Bundle.HTTPVerb.POST)
+					.setMethod(HTTPVerb.POST)
 					.setUrl(res.fhirType())
 				);
 			txBundle.addEntry(newEntry);
