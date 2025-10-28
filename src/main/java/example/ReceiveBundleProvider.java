@@ -16,7 +16,6 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hl7.fhir.instance.model.api.IBaseBundle;
-import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryRequestComponent;
@@ -24,9 +23,6 @@ import org.hl7.fhir.r4.model.Bundle.BundleType;
 import org.hl7.fhir.r4.model.Bundle.HTTPVerb;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.OperationOutcome;
-import org.hl7.fhir.r4.model.OperationOutcome.IssueSeverity;
-import org.hl7.fhir.r4.model.OperationOutcome.IssueType;
-import org.hl7.fhir.r4.model.Parameters;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
 import org.springframework.stereotype.Component;
@@ -56,23 +52,23 @@ public class ReceiveBundleProvider {
 	 * JPA system provider for transaction processing.
 	 */
 	private final JpaSystemProvider jpaSystemProvider;
-	private final static String VALIDATION_PARAM_NAME = "validationResult";
 
 	/**
-	 * Custom FHIR operation that validates and optionally persists an incoming bundle.
+	 * Custom FHIR operation that validates an incoming bundle and persists it when validation succeeds.
 	 * <p>
-	 * The bundle is validated and the resulting {@link OperationOutcome} is
-	 * added to the response {@link Parameters}. If the validation contains no {@code ERROR} or
-	 * {@code FATAL} messages, the bundle is transformed into a transaction bundle and submitted via
-	 * {@link JpaSystemProvider#transaction(RequestDetails,
-	 * IBaseBundle)}. The resulting transaction response is then
-	 * appended to the returned parameters resource.
+	 * The bundle is validated using the injected validator. When the validation produces an
+	 * {@link OperationOutcome} containing {@code ERROR} or {@code FATAL} severities, processing stops by
+	 * throwing an {@link InvalidRequestException} that exposes the outcome to the caller. Otherwise the
+	 * bundle is transformed into a transaction bundle with UUID-based URNs and submitted via
+	 * {@link JpaSystemProvider#transaction(RequestDetails, IBaseBundle)}. The transaction response bundle
+	 * is returned to the client.
 	 *
 	 * @param requestDetails request context provided by HAPI FHIR
 	 * @param bundle         incoming bundle to validate (and potentially persist)
-	 * @return parameters with the transaction response
+	 * @return transaction response bundle
+	 * @throws InvalidRequestException when validation fails or the transaction execution encounters an error
 	 */
-	@Operation(name = "$receiveBundle", idempotent = false)
+	@Operation(name = "$receiveBundle")
 	public Bundle receiveBundle(RequestDetails requestDetails,
 		@OperationParam(name = "resource") Bundle bundle) {
 
@@ -81,9 +77,6 @@ public class ReceiveBundleProvider {
 		log.info("Validation successful?: " + validationResult.isSuccessful());
 		log.debug("Operation outcome: " + ctx.newJsonParser().setPrettyPrint(true)
 			.encodeResourceToString(validationResult.toOperationOutcome()));
-
-		Parameters response
-			= new Parameters();
 
 		// if validation failed set status code and return OperationOutcome
 		if (!validationResult.isSuccessful()) {
@@ -120,7 +113,7 @@ public class ReceiveBundleProvider {
 		// --- 1. Pass: fullUrl + ResourceType/Id mapping ---
 		Map<String, String> oldToNewUrn = new HashMap<>();
 		for (BundleEntryComponent entry : collectionBundle.getEntry()) {
-			Resource res = (Resource) entry.getResource();
+			Resource res = entry.getResource();
 			if (res == null) {
 				continue;
 			}
@@ -141,7 +134,7 @@ public class ReceiveBundleProvider {
 		// --- 2. Pass: map all reference strings in original resources ---
 		FhirTerser terser = ctx.newTerser();
 		for (BundleEntryComponent entry : collectionBundle.getEntry()) {
-			Resource res = (Resource) entry.getResource();
+			Resource res = entry.getResource();
 			if (res == null) {
 				continue;
 			}
@@ -155,7 +148,7 @@ public class ReceiveBundleProvider {
 
 				// Find the bundle entry the oldRef points to
 				for (BundleEntryComponent targetEntry : collectionBundle.getEntry()) {
-					Resource targetRes = (Resource) targetEntry.getResource();
+					Resource targetRes = targetEntry.getResource();
 					if (targetRes == null) {
 						continue;
 					}
@@ -177,7 +170,7 @@ public class ReceiveBundleProvider {
 		txBundle.setType(BundleType.TRANSACTION);
 
 		for (BundleEntryComponent oldEntry : collectionBundle.getEntry()) {
-			Resource res = (Resource) oldEntry.getResource();
+			Resource res = oldEntry.getResource();
 			if (res == null) {
 				continue;
 			}
