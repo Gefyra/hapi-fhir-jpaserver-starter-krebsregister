@@ -59,7 +59,7 @@ public class ReceiveBundleProvider {
 	 * <p>
 	 * The bundle is validated using the injected validator. When the validation produces an
 	 * {@link OperationOutcome} containing {@code ERROR} or {@code FATAL} severities, processing stops by
-	 * throwing an {@link InvalidRequestException} that exposes the outcome to the caller. Otherwise the
+	 * throwing an {@link UnprocessableEntityException} that exposes the outcome to the caller. Otherwise the
 	 * bundle is transformed into a transaction bundle with UUID-based URNs and submitted via
 	 * {@link JpaSystemProvider#transaction(RequestDetails, IBaseBundle)}. The transaction response bundle
 	 * is returned to the client.
