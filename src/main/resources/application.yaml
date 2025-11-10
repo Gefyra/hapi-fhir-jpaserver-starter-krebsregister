@@ -190,7 +190,7 @@ hapi:
     # Allowed Bundle Types for persistence (defaults are: COLLECTION,DOCUMENT,MESSAGE)
     ##################################################
     #    allowed_bundle_types: COLLECTION,DOCUMENT,MESSAGE,TRANSACTION,TRANSACTIONRESPONSE,BATCH,BATCHRESPONSE,HISTORY,SEARCHSET
-    #    allow_cascading_deletes: true
+    allow_cascading_deletes: true
     #    allow_contains_searches: true
     #    allow_external_references: true
     #    allow_multiple_delete: true
@@ -222,7 +222,7 @@ hapi:
     #    enforce_referential_integrity_on_delete: false
     #    enforce_referential_integrity_on_write: false
     #    etag_support_enabled: true
-    #    expunge_enabled: true
+    expunge_enabled: true
     #    client_id_strategy: ALPHANUMERIC
     #    server_id_strategy: SEQUENTIAL_NUMERIC
     #    fhirpath_interceptor_enabled: false
