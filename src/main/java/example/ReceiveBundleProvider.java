@@ -10,6 +10,7 @@ import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.FhirTerser;
 import ca.uhn.fhir.validation.ResultSeverityEnum;
 import ca.uhn.fhir.validation.ValidationResult;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,8 +23,13 @@ import org.hl7.fhir.r4.model.Bundle.BundleEntryComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleEntryRequestComponent;
 import org.hl7.fhir.r4.model.Bundle.BundleType;
 import org.hl7.fhir.r4.model.Bundle.HTTPVerb;
+import org.hl7.fhir.r4.model.CodeableConcept;
+import org.hl7.fhir.r4.model.Coding;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.OperationOutcome;
+import org.hl7.fhir.r4.model.OperationOutcome.IssueSeverity;
+import org.hl7.fhir.r4.model.OperationOutcome.IssueType;
+import org.hl7.fhir.r4.model.Provenance;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
 import org.springframework.stereotype.Component;
@@ -59,7 +65,7 @@ public class ReceiveBundleProvider {
 	 * <p>
 	 * The bundle is validated using the injected validator. When the validation produces an
 	 * {@link OperationOutcome} containing {@code ERROR} or {@code FATAL} severities, processing stops by
-	 * throwing an {@link InvalidRequestException} that exposes the outcome to the caller. Otherwise the
+	 * throwing an {@link UnprocessableEntityException} that exposes the outcome to the caller. Otherwise the
 	 * bundle is transformed into a transaction bundle with UUID-based URNs and submitted via
 	 * {@link JpaSystemProvider#transaction(RequestDetails, IBaseBundle)}. The transaction response bundle
 	 * is returned to the client.
@@ -85,6 +91,9 @@ public class ReceiveBundleProvider {
 				validationResult.toOperationOutcome());
 		}
 
+		// Validate Provenance resource
+		validateProvenanceResource(bundle);
+
 		// Only create and execute transaction if no errors
 		Bundle transactionResponse = new Bundle();
 		try {
@@ -96,6 +105,139 @@ public class ReceiveBundleProvider {
 			throw new UnprocessableEntityException("Error during transaction processing: " + e.getMessage());
 		}
 		return transactionResponse;
+	}
+
+	/**
+	 * Validates that the bundle contains exactly one Provenance resource with CREATE activity
+	 * and that all other resources in the bundle are referenced by this Provenance.
+	 *
+	 * @param bundle the bundle to validate
+	 * @throws UnprocessableEntityException if validation fails
+	 */
+	private void validateProvenanceResource(Bundle bundle) {
+		// Find all Provenance resources with CREATE activity
+		List<Provenance> createProvenances = bundle.getEntry().stream()
+			.filter(entry -> entry.getResource() instanceof Provenance)
+			.map(entry -> (Provenance) entry.getResource())
+			.filter(this::hasCreateActivity)
+			.toList();
+
+		// Check exactly one Provenance with CREATE activity exists
+		if (createProvenances.isEmpty()) {
+			OperationOutcome outcome = createOperationOutcome(
+				"Bundle must contain exactly one Provenance resource with CREATE activity (system: 'http://terminology.hl7.org/CodeSystem/v3-DataOperation', code: 'CREATE')");
+			throw new UnprocessableEntityException("Missing Provenance resource with CREATE activity", outcome);
+		}
+
+		if (createProvenances.size() > 1) {
+			OperationOutcome outcome = createOperationOutcome(
+				"Bundle must contain exactly one Provenance resource with CREATE activity, found " + createProvenances.size());
+			throw new UnprocessableEntityException("Multiple Provenance resources with CREATE activity found", outcome);
+		}
+
+		Provenance createProvenance = createProvenances.get(0);
+
+		// Collect all resource identifiers from bundle (excluding only the CREATE Provenance)
+		Map<String, BundleEntryComponent> resourceMap = new HashMap<>();
+		for (BundleEntryComponent entry : bundle.getEntry()) {
+			Resource res = entry.getResource();
+			if (res == null) {
+				continue;
+			}
+			
+			// Exclude only the CREATE Provenance resource
+			if (res == createProvenance) {
+				continue;
+			}
+
+			// Store multiple possible reference formats
+			String typeId = res.fhirType() + "/" + res.getIdElement().getIdPart();
+			resourceMap.put(typeId, entry);
+			resourceMap.put("/" + typeId, entry);
+			
+			if (entry.hasFullUrl()) {
+				resourceMap.put(entry.getFullUrl(), entry);
+			}
+		}
+
+		// Check that Provenance.target references all other resources
+		List<Reference> targets = createProvenance.getTarget();
+		if (targets.isEmpty()) {
+			OperationOutcome outcome = createOperationOutcome(
+				"Provenance resource must reference all other resources in bundle via target element");
+			throw new UnprocessableEntityException("Provenance has no targets", outcome);
+		}
+
+		// Track which resources are referenced
+		Map<BundleEntryComponent, Boolean> referencedResources = new HashMap<>();
+		resourceMap.values().forEach(entry -> referencedResources.put(entry, false));
+
+		for (Reference target : targets) {
+			String ref = target.getReference();
+			if (ref != null) {
+				BundleEntryComponent entry = resourceMap.get(ref);
+				if (entry != null) {
+					referencedResources.put(entry, true);
+				}
+			}
+		}
+
+		// Find unreferenced resources and create one issue per missing reference
+		List<String> unreferencedResources = new ArrayList<>();
+		for (Map.Entry<BundleEntryComponent, Boolean> entry : referencedResources.entrySet()) {
+			if (!entry.getValue()) {
+				Resource res = entry.getKey().getResource();
+				String identifier = res.fhirType() + "/" + res.getIdElement().getIdPart();
+				unreferencedResources.add(identifier);
+			}
+		}
+
+		if (!unreferencedResources.isEmpty()) {
+			OperationOutcome outcome = new OperationOutcome();
+			for (String unreferenced : unreferencedResources) {
+				outcome.addIssue()
+					.setSeverity(IssueSeverity.ERROR)
+					.setCode(IssueType.INVALID)
+					.setDiagnostics("Provenance resource must reference resource: " + unreferenced);
+			}
+			throw new UnprocessableEntityException("Incomplete Provenance references", outcome);
+		}
+	}
+
+	/**
+	 * Checks if the Provenance resource has the required CREATE activity.
+	 *
+	 * @param provenance the Provenance resource to check
+	 * @return true if CREATE activity is present with correct system
+	 */
+	private boolean hasCreateActivity(Provenance provenance) {
+		if (!provenance.hasActivity()) {
+			return false;
+		}
+
+		CodeableConcept activity = provenance.getActivity();
+		for (Coding coding : activity.getCoding()) {
+			if ("http://terminology.hl7.org/CodeSystem/v3-DataOperation".equals(coding.getSystem())
+				&& "CREATE".equals(coding.getCode())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Creates an OperationOutcome with an error message.
+	 *
+	 * @param message the error message
+	 * @return OperationOutcome with the error
+	 */
+	private OperationOutcome createOperationOutcome(String message) {
+		OperationOutcome outcome = new OperationOutcome();
+		outcome.addIssue()
+			.setSeverity(IssueSeverity.ERROR)
+			.setCode(IssueType.INVALID)
+			.setDiagnostics(message);
+		return outcome;
 	}
 
 	/**
