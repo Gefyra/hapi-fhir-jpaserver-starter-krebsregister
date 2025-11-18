@@ -28,7 +28,8 @@ import java.util.List;
 
 /**
  * Provider that implements the custom {@code $deleteBundle} operation.
- *
+ * This operation hard deletes resources referenced in a Provenance resource
+ * and the Provenance itself.
  */
 @Component
 @Slf4j
@@ -50,7 +51,17 @@ public class DeleteBundleProvider implements IResourceProvider {
 
 
 	/**
+	 * Executes the custom FHIR operation <code>$deleteBundle</code>.
+	 * <p>
+	 * This operation loads the specified <code>Provenance</code> resource and deletes
+	 * all resources referenced in <code>Provenance.target</code>, followed by deleting
+	 * the Provenance resource itself.
+	 * </p>
 	 *
+	 * <p>
+	 * After executing the delete transaction bundle, an expunge operation is performed
+	 * to permanently remove all deleted resources from the persistence layer.
+	 * </p>
 	 *
 	 * @param requestDetails request context provided by HAPI FHIR
 	 * @param theProvenanceId incoming provenance id to delete
