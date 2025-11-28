@@ -109,6 +109,11 @@ public class ReceiveBundleProvider {
 		return transactionResponse;
 	}
 
+	/**
+	 * Add the correct meta.profile claim to a given bundle. This is necessary in order to generate a validation report that checks against specific STF profiles.
+	 *
+	 * @param bundle the bundle to ensure correct profile claim
+	 */
 	private void ensureProfileClaim(Bundle bundle) {
 		//Remove all existing claims
 		bundle.getMeta().getProfile().clear();
