@@ -79,6 +79,8 @@ public class ReceiveBundleProvider {
 	public Bundle receiveBundle(RequestDetails requestDetails,
 		@OperationParam(name = "resource") Bundle bundle) {
 
+		ensureProfileClaim(bundle);
+
 		// Validate the bundle and print the result
 		ValidationResult validationResult = sterbefallValidator.validateWithResult(bundle);
 		log.info("Validation successful?: " + validationResult.isSuccessful());
@@ -105,6 +107,15 @@ public class ReceiveBundleProvider {
 			throw new UnprocessableEntityException("Error during transaction processing: " + e.getMessage());
 		}
 		return transactionResponse;
+	}
+
+	private void ensureProfileClaim(Bundle bundle) {
+		//Remove all existing claims
+		bundle.getMeta().getProfile().clear();
+
+		//Add relevant profile claim
+		final String canonicalUrl = "http://gematik.de/fhir/oegd/stf/StructureDefinition/StfExportBundle";
+		bundle.getMeta().addProfile(canonicalUrl);
 	}
 
 	/**
